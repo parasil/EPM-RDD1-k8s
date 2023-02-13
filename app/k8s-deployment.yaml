@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: greetings-app
+spec:
+  selector:
+    matchLabels:
+      app: greetings-app
+  template:
+    metadata:
+      labels:
+        app: greetings-app
+    spec:
+      containers:
+      - name: greetings-app
+        image: <FILL_THIS>
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000

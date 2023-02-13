@@ -1,0 +1,93 @@
+# ----------1) Create AKS cluster using AZ CLI ----------------------------------------
+#-----------(Azure CLI must be firts installed on the host, where this code is run from)-------------
+az login
+az account show
+$rg_name = 'rg-k8s-charnetski'
+$rg_location ='eastus'
+$aks_name = 'AKSClusterCharnetski'
+$aks_nodes_size = 'standard_b2s' # 2 cpu 4 GB 30$/month
+
+# create azure resource group
+az group create `
+    -l $rg_location `
+    -n $rg_name
+# put azure resource group to var
+$rg = az group show --name=$rg_name
+# create AKS cluster
+az aks create `
+    -g $rg_name `
+    -n $aks_name `
+    --enable-managed-identity `
+    --node-vm-size $aks_nodes_size `
+    --node-count 1 `
+    --nodepool-name 'frontendpool' `
+    --nodepool-labels "nodePoolLabel=frontendPool" `
+    --enable-addons monitoring `
+    --enable-msi-auth-for-monitoring  `
+    --generate-ssh-keys
+# add one more node pool
+az aks nodepool add `
+    --resource-group $rg_name `
+    --cluster-name $aks_name `
+    --name 'backendpool' `
+    --labels "nodePoolLabel=backendPool" `
+    --node-vm-size $aks_nodes_size `
+    --node-count 1 
+
+#----------2) Create Azure Container Registry using az CLI--------------------
+
+$acr_name = 'acrcharnetski'
+# create Azure container registry:
+az acr create `
+    --name $acr_name `
+    --resource-group $rg_name `
+    --sku Premium `
+    --zone-redundancy Disabled
+
+# login to created azure container registry (local docker daemon must be running!!!)
+az acr login --name $acr_name # $($acr_name + '.azurecr.io')
+
+#----------3) Create container image ------------------------------------
+# set current folder to folder with docker file
+cd  C:\projects\k8s\app
+
+# set docker context to default if another was selected
+docker context use default
+
+$image_name = $acr_name + '.azurecr.io' + '/greetings:v1'
+# docker build from current dir
+#docker build . #--tag Greetings:v1
+#docker tag 5ed8751ec3ed $($acr_name + '.azurecr.io'+'/greetings:v1')
+docker build --tag $image_name . # $($acr_name + '.azurecr.io' + '/greetings:v1') .
+# push created image to my Azure Container Registry
+docker push $image_name #$($acr_name + '.azurecr.io'+'/greetings:v1')
+
+# -----------4) Run application in AKS cluster -----------------------------
+az aks install-cli # run once to install aks cli
+# Configure kubectl to connect to Kubernetes cluster using the az aks get-credentials command (RUN again if AKS is recreated!!!)
+az aks get-credentials --resource-group $rg_name --name $aks_name
+# test connection to my AKS
+kubectl get nodes -o wide
+#az aks nodepool list --cluster-name $aks_name --resource-group $rg_name
+
+#attach existing acr to existing aks using AAD:
+#az aks update -n $aks_name -g $rg_name --attach-acr $acr_name #$($acr_name + '.azurecr.io')
+docker login $($acr_name + '.azurecr.io') #--it will ask for username and pass. they can be taken from acr after enambling admin access
+# create secret from .docker\config.json file created by 'docker login' command
+kubectl create secret generic regcred `
+    --from-file=.dockerconfigjson='C:\Users\paras\.docker\config.json' `
+    --type=kubernetes.io/dockerconfigjson
+# check secret creation:
+kubectl get secret regcred --output=yaml
+# create objects from manifest file:
+kubectl apply -f ..\greetings.yaml
+
+
+
+
+
+#delete objects
+kubectl delete service redis
+kubectl delete service greetings-app
+kubectl delete deployment redis
+kubectl delete deployment greetings-app
